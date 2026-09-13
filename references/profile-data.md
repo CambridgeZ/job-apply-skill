@@ -60,7 +60,7 @@ python3 "$SKILL_DIR/scripts/profile_store.py" forget contact.phone --scope '{}'
 
 `--file PATH` 放在子命令前。`forget KEY` 未指定 `--scope` 时会删除该字段的全部范围，只用于用户要求忘记该字段的情况。
 
-查询返回 `known` 才有可用答案。`missing`、`expired`、`ambiguous` 表示缺失、过期或同样具体的范围有冲突，需要检查并询问必要的信息。工具先选择最具体的适用范围，再检查有效期；该范围已过期时不会退回全局答案。工具不会替代理判断工作状况是否已改变；即使返回 `known`，仍要阅读 source、scope、时间和本次用户指令。
+查询返回 `known` 才有可用答案。`missing`、`expired`、`ambiguous` 表示缺失、过期或同样具体的范围有冲突，需要检查并按 [只问一次的规则](../SKILL.md#填写及询问) 处理；查询仍缺失不等于可以再次询问，已问字段保留待答。工具先选择最具体的适用范围，再检查有效期；该范围已过期时不会退回全局答案。工具不会替代理判断工作状况是否已改变；即使返回 `known`，仍要阅读 source、scope、时间和本次用户指令。
 
 同一个 key + scope 的不同 value 会返回 `conflict`，不覆盖旧记录。用户明确更正后可使用 `--replace`，它是表达“这是已确认更正”的技术开关，不要求再次向用户申请许可。
 
