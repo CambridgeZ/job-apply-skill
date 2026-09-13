@@ -4,11 +4,14 @@
 Secret-key checks prevent some mistakes, but cannot detect secrets in free text.
 Send personal data through stdin, never shell arguments. All times use ISO 8601
 with an explicit timezone. Scope/context values are strings and match exactly.
+Call confirm-application only after the user explicitly confirms the displayed
+review version in the current conversation; never confirm on the user's behalf.
 """
 import argparse
 import contextlib
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,7 +21,7 @@ import sys
 import tempfile
 
 DEFAULT_FILE = "~/Documents/Codex/job-applications/profile.json"
-STATES = {"draft", "ready", "submitting", "submitted", "uncertain", "blocked"}
+STATES = {"draft", "awaiting_confirmation", "ready", "submitting", "submitted", "uncertain", "blocked"}
 SECRET_WORDS = ("password", "passwd", "passphrase", "token", "cookie", "otp",
                 "验证码", "密码", "口令", "密钥", "secret", "verificationcode",
                 "onetimecode", "smscode", "authcode", "apikey", "privatekey", "recoverycode")
@@ -88,12 +91,56 @@ def fact_valid(fact, stored=False):
     no_secrets(fact)
 
 
+def review_valid(review):
+    require(isinstance(review, dict) and isinstance(review.get("fields"), list)
+            and bool(review["fields"]), "Review must contain a nonempty fields array.")
+    for field in review["fields"]:
+        require(isinstance(field, dict) and nonempty(field.get("label")) and "value" in field,
+                "Each review field needs a nonempty label and its actual filled value.")
+        for key in ("source", "adaptation"):
+            if key in field:
+                require(nonempty(field[key]), "Optional review source/adaptation must be nonempty text.")
+        no_secrets({field["label"]: field["value"]})
+    if "notes" in review:
+        require(isinstance(review["notes"], str), "Review notes must be text.")
+    no_secrets(review)
+
+
+def review_digest(review):
+    return hashlib.sha256(canonical(review).encode("utf-8")).hexdigest()
+
+
+def application_identity_valid(app):
+    require(isinstance(app, dict) and all(nonempty(app.get(k)) for k in ("company", "job_id", "account")),
+            "Application identity needs company, job_id, and account (an alias is allowed).")
+
+
+def legacy_submitted(app):
+    return app.get("status") == "submitted" and not any(k in app for k in ("review", "review_hash", "confirmation"))
+
+
 def application_valid(app, stored=False):
-    require(isinstance(app, dict), "An application must be a JSON object.")
-    required = ("company", "job_id", "account", "url", "resume_ref")
-    require(all(nonempty(app.get(k)) for k in required),
-            "Application needs company, job_id, account (an alias is allowed), url, and resume_ref.")
+    application_identity_valid(app)
+    require(all(nonempty(app.get(k)) for k in ("url", "resume_ref")),
+            "Application needs url and resume_ref.")
     require(isinstance(app.get("status"), str) and app["status"] in STATES, "Invalid application status.")
+    if "recruiting_url" in app:
+        require(nonempty(app["recruiting_url"]), "Recruiting URL must be nonempty text.")
+    if "review" in app:
+        review_valid(app["review"])
+        require(app.get("review_hash") == review_digest(app["review"]), "Review hash does not match the current review.")
+    else:
+        require("review_hash" not in app and "confirmation" not in app, "Review metadata requires a review.")
+    if "confirmation" in app:
+        confirmation = app["confirmation"]
+        require(isinstance(confirmation, dict) and confirmation.get("review_hash") == app.get("review_hash")
+                and nonempty(confirmation.get("reference")), "Confirmation must reference the current review hash.")
+        timestamp(confirmation.get("confirmed_at"))
+    if app["status"] == "awaiting_confirmation":
+        require("review" in app, "Awaiting confirmation requires a nonempty review.")
+    if app["status"] in {"submitting", "submitted"} and not (stored and legacy_submitted(app)):
+        require("review" in app and "confirmation" in app,
+                "Submission requires explicit user confirmation of the current review version.")
     if app["status"] == "submitted":
         require(nonempty(app.get("evidence")), "Submitted status requires nonempty evidence.")
     if stored:
@@ -246,20 +293,62 @@ def run(args, data):
             data["facts"].append(fact)
         return {"status": "updated" if existing else "created", "key": fact["key"]}, 0, True
     if command == "record-application":
-        app = parse_json(sys.stdin.read())
+        incoming = parse_json(sys.stdin.read())
+        application_identity_valid(incoming)
+        if "status" in incoming:
+            require(isinstance(incoming["status"], str) and incoming["status"] in STATES, "Invalid application status.")
+        require("confirmation" not in incoming and "review_hash" not in incoming,
+                "Confirmation and review_hash are generated fields; use confirm-application after explicit user confirmation.")
+        existing = next((a for a in data["applications"] if application_id(a) == application_id(incoming)), None)
+        app = {**(existing or {}), **incoming}
+        review_changed = False
+        if "review" in incoming:
+            review_valid(incoming["review"])
+            app["review_hash"] = review_digest(incoming["review"])
+            review_changed = existing is None or app["review_hash"] != existing.get("review_hash")
+            if review_changed:
+                require(app.get("status") not in ("submitting", "submitted"),
+                        "Changed review must be saved and explicitly confirmed before submission.")
+                app.pop("confirmation", None)
+                app["status"] = "awaiting_confirmation"
+        if existing is not None and "review" in existing and any(app[k] != existing[k] for k in ("resume_ref", "url")):
+            require(review_changed, "Changing resume_ref or the job URL requires a different review showing the new attachment or target.")
         application_valid(app)
-        existing = next((a for a in data["applications"] if application_id(a) == application_id(app)), None)
         app["created_at"] = existing["created_at"] if existing else now()
         app["updated_at"] = now()
         if existing is not None:
             data["applications"][data["applications"].index(existing)] = app
         else:
             data["applications"].append(app)
-        return {"status": "updated" if existing else "created", "application_status": app["status"]}, 0, True
+        result = {"status": "updated" if existing else "created", "application_status": app["status"]}
+        if "review_hash" in app:
+            result["review_hash"] = app["review_hash"]
+        return result, 0, True
+    if command == "confirm-application":
+        confirmation = parse_json(sys.stdin.read())
+        application_identity_valid(confirmation)
+        require(nonempty(confirmation.get("review_hash")) and nonempty(confirmation.get("reference")),
+                "Confirmation needs the displayed review_hash and a reference to the user's explicit confirmation.")
+        no_secrets(confirmation)
+        existing = next((a for a in data["applications"] if application_id(a) == application_id(confirmation)), None)
+        require(existing is not None and "review" in existing, "Save a nonempty application review before confirming.")
+        if confirmation["review_hash"] != existing["review_hash"]:
+            return {"status": "stale_review", "message": "Review changed; display the current version and obtain a new confirmation."}, 3, False
+        require(existing["status"] != "submitted", "Application is already submitted; confirmation must not reopen it.")
+        app = {**existing, "status": "ready", "updated_at": now(), "confirmation": {
+            "review_hash": existing["review_hash"], "reference": confirmation["reference"], "confirmed_at": now()}}
+        application_valid(app, stored=True)
+        data["applications"][data["applications"].index(existing)] = app
+        return {"status": "confirmed", "application_status": "ready", "review_hash": app["review_hash"]}, 0, True
     if command == "list-applications":
         apps = [a for a in data["applications"] if (not args.company or a["company"] == args.company)
                 and (not args.job_id or a["job_id"] == args.job_id)]
-        return {"status": "ok", "applications": apps}, 0, False
+        result = {"status": "ok", "applications": apps}
+        legacy_count = sum(legacy_submitted(a) for a in apps)
+        if legacy_count:
+            result["warnings"] = [{"code": "legacy_submitted_without_review", "count": legacy_count,
+                                   "message": "Historical submissions remain readable; this is not confirmation for a new submission."}]
+        return result, 0, False
     if command == "forget":
         scope = parse_json(args.scope) if args.scope is not None else None
         if scope is not None:
@@ -283,6 +372,7 @@ def main():
     put = commands.add_parser("put-fact", help="Read one fact JSON object from stdin")
     put.add_argument("--replace", action="store_true", help="Use only for an explicitly confirmed correction")
     commands.add_parser("record-application", help="Read one application JSON object from stdin")
+    commands.add_parser("confirm-application", help="Record explicit user confirmation of the displayed review hash; read JSON from stdin")
     listing = commands.add_parser("list-applications")
     listing.add_argument("--company")
     listing.add_argument("--job-id")

@@ -54,6 +54,7 @@ python3 "$SKILL_DIR/scripts/profile_store.py" put-fact < "$PRIVATE_INPUT"
 python3 "$SKILL_DIR/scripts/profile_store.py" put-fact --replace < "$PRIVATE_INPUT"
 python3 "$SKILL_DIR/scripts/profile_store.py" list-applications --company Example --job-id JOB-123
 python3 "$SKILL_DIR/scripts/profile_store.py" record-application < "$PRIVATE_INPUT"
+python3 "$SKILL_DIR/scripts/profile_store.py" confirm-application < "$PRIVATE_INPUT"
 python3 "$SKILL_DIR/scripts/profile_store.py" forget contact.phone --scope '{}'
 ```
 
@@ -65,7 +66,7 @@ python3 "$SKILL_DIR/scripts/profile_store.py" forget contact.phone --scope '{}'
 
 同值普通写入保留未提供的旧元数据，简历来源不能覆盖已有用户确认来源。使用 `--replace` 会完整替换这条事实及元数据；更正时保留仍适用的范围、有效期和必要说明，不把该开关当作忽略旧记录的捷径。
 
-退出码：成功 `0`；输入/读写错误 `2`；写入冲突 `3`；缺失 `4`；过期 `5`；歧义 `6`。需要检查 JSON 结果和退出码，不能忽略失败后声称已经保存。错误时保留原文件，不自行清空重建。
+退出码：成功 `0`；输入/读写错误 `2`；写入冲突或确认版本已过时 `3`；缺失 `4`；过期 `5`；歧义 `6`。需要检查 JSON 结果和退出码，不能忽略失败后声称已经保存。错误时保留原文件，不自行清空重建。
 
 ## 申请记录
 
@@ -74,16 +75,64 @@ python3 "$SKILL_DIR/scripts/profile_store.py" forget contact.phone --scope '{}'
   "company": "Example",
   "job_id": "JOB-123",
   "account": "primary-application-account",
-  "status": "submitted",
+  "job_title": "后端开发工程师",
+  "status": "awaiting_confirmation",
+  "recruiting_url": "https://careers.example.com/",
   "url": "https://careers.example.com/jobs/JOB-123",
   "resume_ref": "resume.pdf + 对应版本或哈希",
-  "evidence": "申请详情页显示已提交，申请编号 EXAMPLE-123"
+  "review": {
+    "fields": [
+      {"label": "申请岗位", "value": "后端开发工程师 · JOB-123"},
+      {"label": "简历附件", "value": "resume.pdf + 对应版本或哈希"},
+      {
+        "label": "与岗位相关的项目经历",
+        "value": "这里应当是从实际页面读取的完整填写内容；此处仅为格式示例",
+        "source": "本次简历中的相关项目与用户补充答案",
+        "adaptation": "按本题要求突出个人职责与解决方法，未增加未经证实的指标"
+      }
+    ],
+    "notes": "记录必要的留空项或表单选择说明"
+  }
 }
 ```
 
-同公司 + 岗位编号 + 账号更新同一记录，自动维护 `created_at`、`updated_at`。账号可用稳定别名，避免日志重复记录完整手机号。无编号时用岗位详情 URL 作 `job_id`。允许状态为 `draft`、`ready`、`submitting`、`submitted`、`uncertain`、`blocked`；`submitted` 必须有证据。脚本只保存状态，不能替代浏览器检查成功或阻止所有重复提交。
+同公司 + 岗位编号 + 账号更新同一记录，自动维护 `created_at`、`updated_at`。账号可用稳定别名，避免日志重复记录完整手机号。无编号时用岗位详情 URL 作 `job_id`。可附加 `application_id`、`next_step` 等必要信息。状态含义如下：
 
-更新时传入完整记录，保留仍适用的信息；可以附加必要的 `next_step`、`application_id` 或最后核实的时间。记录用稳定、可公开访问的岗位 URL，移除含认证令牌的查询参数；不保存浏览器认证状态。
+| 状态 | 含义 |
+| --- | --- |
+| `draft` | 正在准备或填写 |
+| `awaiting_confirmation` | 实际填写内容已保存，等待用户核对 |
+| `ready` | 可继续处理；是否已确认还需看匹配的 confirmation，不能仅看此状态 |
+| `submitting` | 已获当前版本确认，提交中 |
+| `submitted` | 已取得网站成功证据 |
+| `uncertain` | 点击后无法确定结果，需核实而非直接重试 |
+| `blocked` | 被缺失信息、验证或页面问题阻塞 |
+
+`record-application` 新建时提供完整身份、链接、简历及状态，更新时可以只提供三项身份字段和需要改变的属性，其他元数据会保留。记录用稳定、可公开访问的 URL，移除含认证令牌的查询参数；不保存浏览器认证状态。每次记录更新后运行 `dashboard.py build` 刷新网页。
+
+## 当前版本确认
+
+`review.fields` 记录网页上实际填入的全部字段，包括附件版本和关键选择。工具对完整 `review` 计算 SHA-256 并返回 `review_hash`。新建或改变 review 会清除旧确认、转为 `awaiting_confirmation`；确认之前不能写 `submitting` 或 `submitted`。
+
+先向用户展示这个完整版本，并获得本次明确确认后，才能将下列结构从 stdin 传给 `confirm-application`：
+
+```json
+{
+  "company": "Example",
+  "job_id": "JOB-123",
+  "account": "primary-application-account",
+  "review_hash": "本次展示并经用户确认的实际hash",
+  "reference": "用户确认的实际对话日期与答复引用；不要编造"
+}
+```
+
+工具验证传入 hash 等于当前版本后，写入 `confirmation`（包含该 hash、答复来源和 UTC `confirmed_at`），并把状态改为 `ready`。hash 已过时则返回 `stale_review` 且不写入。不要手工向 `record-application` 填入 `confirmation` 或 `review_hash`，这些由专用操作生成。
+
+提交之前再核对页面与获确认的 review 一致。对已保存的附件或岗位详情做变更时，也要将新版本反映到 review 中并重新展示；修改 `resume_ref` 但沿用旧核对内容不能保持确认。得到新确认后，可以用三项身份字段加 `status: submitting` 更新记录。成功后写 `status: submitted` 并提供真实非空 `evidence`，以及实际申请编号等。
+
+脚本只验证记录内部的版本关系，不能自行证明用户真的确认、浏览器字段一致或投递成功。代理必须依据当前对话和实际页面完成这些核实；网页只展示信息，不产生用户确认。
+
+历史 `submitted` 记录如果没有 review/confirmation 仍可读取，并会返回旧记录提示；它不证明新的申请已确认，也不能代替本次核对。
 
 ## 存储边界
 

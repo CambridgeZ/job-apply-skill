@@ -9,6 +9,9 @@ data/
 resumes/
 attachments/
 screenshots/
+/dashboard.html
+reviews/
+review-reports/
 *.pdf
 *.docx
 *.doc

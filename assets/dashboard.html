@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="__DASHBOARD_CSP__">
+  <title>我的投递记录</title>
+  <style>
+    :root{color-scheme:light;--ink:#213b35;--muted:#6a7b73;--green:#216b50;--line:#dce5df;--paper:#fff;--canvas:#f5f7f2;--amber:#976722;--blue:#406a9c;--red:#a14d42}
+    *{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}button,input{font:inherit}button,a,input,summary{-webkit-tap-highlight-color:transparent}button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #8bc7ac;outline-offset:4px}button{cursor:pointer}a{color:var(--green);text-decoration:none}a:hover{text-decoration:underline}button:disabled{cursor:default}main{max-width:1120px;margin:0 auto;padding:44px 36px 24px}.topline{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:650;letter-spacing:.08em}.brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:var(--green);color:white;font-size:19px}.privacy{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:99px;padding:5px 12px;color:var(--muted);font-size:12px}.privacy i{width:6px;height:6px;border-radius:50%;background:#45886a}h1{font-size:36px;line-height:1.3;letter-spacing:-.04em;margin:0 0 10px;font-weight:700}.intro{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:30px}.intro p{color:var(--muted);margin:0}.sync{text-align:right;flex-shrink:0;color:var(--muted);font-size:12px}.sync button{border:0;background:none;color:var(--green);padding:0 0 0 8px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:32px}.stat{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:19px 22px;position:relative}.stat-label{color:var(--muted);font-size:13px}.stat-number{display:block;font-size:34px;font-weight:650;line-height:1.3;margin-top:9px;font-variant-numeric:tabular-nums}.stat-symbol{position:absolute;right:19px;top:21px;display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:#edf5ef;color:var(--green)}.stat:nth-child(2) .stat-symbol{background:#fbf2df;color:var(--amber)}.stat:nth-child(3) .stat-symbol{background:#edf2f8;color:var(--blue)}.stat:nth-child(4) .stat-symbol{background:#fbefea;color:var(--red)}.section-heading{display:flex;align-items:center;gap:11px;margin-bottom:16px}h2{font-size:18px;letter-spacing:-.01em;margin:0}.count{background:#e8ede8;padding:1px 8px;border-radius:6px;font-size:12px;color:var(--muted)}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}.search{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:8px 12px;min-width:240px}.search span{font-size:19px;line-height:1;color:var(--muted)}.search input{border:0;outline:none!important;background:none;color:var(--ink);width:100%;min-width:0}.search input::placeholder{color:#87938c}.search:focus-within{outline:3px solid #c6e0d0;outline-offset:2px}.filters{display:flex;gap:5px;flex-wrap:wrap}.filter{border:1px solid transparent;border-radius:8px;background:transparent;padding:6px 11px;color:var(--muted);white-space:nowrap;font-size:13px}.filter:hover{background:#e9efea}.filter[aria-pressed="true"]{background:#e2eee4;color:var(--green);font-weight:650;border-color:#d4e2d8}.records{display:grid;gap:13px}.record{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}.record-main{padding:21px 23px}.record-head{display:flex;gap:14px;align-items:flex-start}.company-mark{display:grid;place-items:center;flex-shrink:0;width:43px;height:43px;border-radius:12px;border:1px solid #dce6df;background:#f3f7f2;color:#4c7060;font-size:19px;font-weight:650}.record-info{flex:1;min-width:0}.company{font-size:16px;font-weight:650;overflow-wrap:anywhere;margin:0;line-height:1.55}.job{color:var(--muted);font-size:14px;margin-top:3px;overflow-wrap:anywhere}.badge{flex-shrink:0;font-size:12px;line-height:1.5;padding:4px 9px;border-radius:7px;background:#edf2f8;color:var(--blue);max-width:40%;text-align:center}.badge[data-group="submitted"]{background:#e9f4ec;color:var(--green)}.badge[data-group="awaiting_confirmation"]{background:#fbf3df;color:var(--amber)}.badge[data-group="needs_attention"]{background:#f9ebe7;color:var(--red)}.record-bottom{display:flex;align-items:flex-end;justify-content:space-between;gap:15px;margin-top:18px;padding-left:57px}.meta{display:flex;gap:5px 20px;flex-wrap:wrap;color:#839087;font-size:12px}.meta-item{overflow-wrap:anywhere}.links{display:flex;gap:17px;flex-shrink:0;font-size:13px}.no-link{color:#97a39b;font-size:12px}.review{border-top:1px solid #eaf0eb}.review summary{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;cursor:pointer;padding:11px 23px;list-style:none}.review summary::-webkit-details-marker{display:none}.review summary::before{content:"›";font-size:18px;line-height:1;transition:transform .15s}.review[open] summary::before{transform:rotate(90deg)}.review summary:hover{background:#fbfcf9}.review-content{padding:5px 23px 22px}.confirmation{margin:0 0 16px;font-size:12px;color:var(--amber)}.confirmation.confirmed{color:var(--green)}.fields{margin:0}.field{display:grid;grid-template-columns:150px minmax(0,1fr);gap:20px;padding:14px 0;border-top:1px solid #edf1ec}.field dt{color:var(--muted);font-size:13px;overflow-wrap:anywhere}.field dd{margin:0;min-width:0}.value{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}.adaptation{margin:9px 0 0;padding:8px 11px;border-left:2px solid #c4d9c9;background:#f7f9f5;color:#738277;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}.review-empty,.hidden-note{font-size:13px;color:var(--muted)}.notice{padding:14px 18px;border:1px solid #e7d3a2;background:#fff8e7;border-radius:12px;margin-bottom:23px;color:#856626;font-size:13px}.notice[hidden]{display:none}.notice.error{border-color:#e8c6bc;background:#fff2ed;color:#965848}.empty{border:1px dashed #d5dfd6;border-radius:16px;min-height:260px;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:40px 24px;text-align:center;background:#f9fbf7}.empty[hidden]{display:none}.empty-mark{display:grid;place-items:center;width:48px;height:48px;border-radius:15px;background:#eaf1e9;color:#71967d;font-size:26px;margin-bottom:15px}.empty h3{font-size:16px;margin:0 0 7px}.empty p{max-width:440px;margin:0;color:var(--muted);font-size:13px}footer{display:flex;justify-content:space-between;gap:20px;border-top:1px solid var(--line);margin-top:36px;padding-top:19px;color:#839087;font-size:11px}.sr-only{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}noscript{display:block;padding:20px;color:#a14d42}
+    .receipt,.review-notes{white-space:pre-wrap;overflow-wrap:anywhere;margin:14px 0 0;padding:10px 12px;background:#f5f8f2;border-radius:8px;color:#6a7b73;font-size:12px}.receipt{margin-left:57px}.review-notes{margin-top:8px}
+    @media(max-width:850px){main{padding:30px 24px}.toolbar{align-items:stretch;flex-direction:column}.search{max-width:none}.filters{gap:7px}.record-bottom{align-items:flex-start;flex-direction:column;gap:10px}.stats{gap:10px}.stat{padding:16px}.stat-symbol{right:13px;top:16px}.stat-number{font-size:30px}}
+    @media(max-width:540px){main{padding:23px 17px}.topline{margin-bottom:26px}.brand{font-size:11px;gap:8px}.privacy{font-size:10px;padding:4px 9px}h1{font-size:29px}.intro{align-items:flex-start;flex-direction:column;gap:13px;margin-bottom:23px}.intro p{font-size:13px}.sync{text-align:left}.stats{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:26px}.stat-number{font-size:30px}.record-main{padding:18px 16px}.company-mark{width:36px;height:36px;border-radius:10px;font-size:17px}.record-head{gap:10px}.company{font-size:15px}.job{font-size:12px}.badge{font-size:11px;padding:4px 7px}.record-bottom{padding-left:0;margin-top:16px}.meta{font-size:11px;gap:3px 12px}.review summary{padding:10px 16px}.review-content{padding:4px 16px 18px}.field{display:block;padding:12px 0}.field dt{margin-bottom:7px}.value{font-size:13px}.filters{gap:3px}.filter{padding:6px 9px;font-size:12px}footer{flex-direction:column;gap:5px;margin-top:28px}.empty{min-height:230px}}
+    @media(max-width:540px){.receipt{margin-left:0}}
+    @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="topline"><div class="brand"><span class="brand-mark" aria-hidden="true">↗</span>求职进度簿</div><span class="privacy"><i aria-hidden="true"></i>本地保存 · 私人记录</span></div>
+  <header class="intro"><div><h1>我的投递记录</h1><p>查看投递进度，回顾每一次填写与确认。</p></div><div class="sync"><div id="mode">离线快照</div><span id="updated"></span><button id="refresh" type="button" hidden>刷新</button></div></header>
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  <section class="stats" aria-label="投递统计">
+    <div class="stat"><span class="stat-label">已提交</span><span class="stat-symbol" aria-hidden="true">✓</span><strong class="stat-number" id="stat-submitted">0</strong></div>
+    <div class="stat"><span class="stat-label">待确认</span><span class="stat-symbol" aria-hidden="true">◷</span><strong class="stat-number" id="stat-awaiting_confirmation">0</strong></div>
+    <div class="stat"><span class="stat-label">填写中</span><span class="stat-symbol" aria-hidden="true">✎</span><strong class="stat-number" id="stat-in_progress">0</strong></div>
+    <div class="stat"><span class="stat-label">需处理</span><span class="stat-symbol" aria-hidden="true">!</span><strong class="stat-number" id="stat-needs_attention">0</strong></div>
+  </section>
+  <section aria-labelledby="list-heading">
+    <div class="section-heading"><h2 id="list-heading">申请清单</h2><span class="count" id="count">0 条</span></div>
+    <div class="toolbar">
+      <label class="search"><span aria-hidden="true">⌕</span><span class="sr-only">搜索公司、岗位或岗位编号</span><input id="search" type="search" placeholder="搜索公司、岗位或编号" autocomplete="off"></label>
+      <div class="filters" aria-label="按状态筛选">
+        <button type="button" class="filter" data-filter="all" aria-pressed="true">全部</button>
+        <button type="button" class="filter" data-filter="submitted" aria-pressed="false">已提交</button>
+        <button type="button" class="filter" data-filter="awaiting_confirmation" aria-pressed="false">待确认</button>
+        <button type="button" class="filter" data-filter="in_progress" aria-pressed="false">填写中</button>
+        <button type="button" class="filter" data-filter="needs_attention" aria-pressed="false">需处理</button>
+      </div>
+    </div>
+    <div id="records" class="records"></div>
+    <div id="empty" class="empty" hidden><span class="empty-mark" aria-hidden="true">▤</span><h3 id="empty-title">还没有投递记录</h3><p id="empty-description">保存第一条申请后，公司、岗位和招聘链接会出现在这里。</p></div>
+    <p id="results-status" class="sr-only" aria-live="polite"></p>
+  </section>
+  <footer><span>记录保存在本机。此页只展示申请摘要和已保存的填写内容。</span><span id="footer-mode">网页快照可离线查看</span></footer>
+  <noscript>请启用 JavaScript 以查看本地投递记录。此网页不会加载任何外部脚本。</noscript>
+</main>
+<script id="initial-data" type="application/json">__DASHBOARD_DATA__</script>
+<script>
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  let data = JSON.parse($("initial-data").textContent);
+  let activeFilter = "all";
+  let networkError = "";
+  let refreshing = false;
+  const live = (location.protocol === "http:" || location.protocol === "https:");
+  const node = (tag, className, text) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = String(text);
+    return element;
+  };
+  const formatTime = (value) => {
+    if (!value) return "时间未记录";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat("zh-CN", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).format(date);
+  };
+  function link(label, value) {
+    if (!value) return null;
+    try {
+      const url = new URL(value);
+      if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password) return null;
+      const anchor = node("a", "", label + " ↗");
+      anchor.href = url.href;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      return anchor;
+    } catch (_) { return null; }
+  }
+  function card(app) {
+    const article = node("article", "record");
+    const main = node("div", "record-main");
+    const head = node("div", "record-head");
+    const mark = node("span", "company-mark", Array.from(app.company)[0] || "·");
+    mark.setAttribute("aria-hidden", "true");
+    const info = node("div", "record-info");
+    info.append(node("h3", "company", app.company), node("div", "job", app.job_title));
+    const badge = node("span", "badge", app.status_label);
+    badge.dataset.group = app.status_group;
+    head.append(mark, info, badge);
+    const bottom = node("div", "record-bottom");
+    const meta = node("div", "meta");
+    meta.append(node("span", "meta-item", "更新于 " + formatTime(app.updated_at)));
+    if (app.application_id) meta.append(node("span", "meta-item", "申请编号 " + app.application_id));
+    if (app.job_id !== app.job_title) meta.append(node("span", "meta-item", "岗位 " + app.job_id));
+    const links = node("div", "links");
+    const recruiting = link("招聘入口", app.recruiting_url);
+    const job = link("岗位详情", app.url);
+    if (recruiting) links.append(recruiting);
+    if (job) links.append(job);
+    if (!recruiting && !job) links.append(node("span", "no-link", "招聘链接尚未记录"));
+    bottom.append(meta, links);
+    main.append(head, bottom);
+    if (app.evidence) main.append(node("p", "receipt", (app.status === "submitted" ? "回执摘要 · " : "记录说明 · ") + app.evidence));
+    const review = node("details", "review");
+    const summary = node("summary", "", "查看填写内容 · " + app.fields.length + " 项");
+    const content = node("div", "review-content");
+    const confirmed = app.confirmation.state === "confirmed";
+    const confirmation = node("p", "confirmation" + (confirmed ? " confirmed" : ""), app.confirmation.label + (confirmed ? " · " + formatTime(app.confirmation.confirmed_at) : ""));
+    content.append(confirmation);
+    if (app.fields.length) {
+      const fields = node("dl", "fields");
+      for (const field of app.fields) {
+        const row = node("div", "field");
+        const answer = node("dd", "");
+        answer.append(node("div", "value", field.value));
+        if (field.adaptation) answer.append(node("p", "adaptation", "改写说明 · " + field.adaptation));
+        row.append(node("dt", "", field.label), answer);
+        fields.append(row);
+      }
+      content.append(fields);
+    } else { content.append(node("p", "review-empty", "这条记录还没有保存可展示的填写内容。")); }
+    if (app.notes) content.append(node("p", "review-notes", "核对备注 · " + app.notes));
+    if (app.hidden_fields) content.append(node("p", "hidden-note", "认证相关字段已隐藏。"));
+    review.append(summary, content);
+    article.append(main, review);
+    return article;
+  }
+  function render() {
+    for (const key of ["submitted", "awaiting_confirmation", "in_progress", "needs_attention"]) $("stat-" + key).textContent = String(data.stats[key]);
+    $("updated").textContent = data.generated_at ? "快照更新于 " + formatTime(data.generated_at) : "";
+    const notice = $("notice");
+    const error = networkError || (data.state === "error" ? data.message : "");
+    notice.hidden = !error && data.state !== "uninitialized";
+    notice.classList.toggle("error", Boolean(error));
+    notice.textContent = error ? ((data.stale || networkError) ? "暂时无法更新，正在显示上次成功读取的记录。" : "暂时无法加载记录。") + error : data.message;
+    const query = $("search").value.trim().toLocaleLowerCase();
+    const matches = data.applications.filter((app) =>
+      (activeFilter === "all" || app.status_group === activeFilter) &&
+      [app.company, app.job_title, app.job_id].some((value) => value.toLocaleLowerCase().includes(query)));
+    const fragment = document.createDocumentFragment();
+    for (const app of matches) fragment.append(card(app));
+    $("records").replaceChildren(fragment);
+    $("count").textContent = matches.length === data.applications.length ? matches.length + " 条" : matches.length + " / " + data.applications.length + " 条";
+    $("results-status").textContent = "当前显示 " + matches.length + " 条申请";
+    $("empty").hidden = matches.length > 0;
+    if (!data.applications.length) {
+      $("empty-title").textContent = data.state === "error" ? "暂时无法加载记录" : "还没有投递记录";
+      $("empty-description").textContent = data.state === "error" ? "已有资料没有被清空。修复读取问题后，网页会重新显示记录。" : data.state === "uninitialized" ? "资料尚未初始化。开始第一次申请并保存记录后，这里会显示投递进度。" : "保存第一条申请后，公司、岗位和招聘链接会出现在这里。";
+    } else {
+      $("empty-title").textContent = "没有找到匹配的申请";
+      $("empty-description").textContent = "试试其他公司或岗位名称，或切换到“全部”。";
+    }
+  }
+  async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
+    $("refresh").disabled = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch("/api/applications", {cache:"no-store", credentials:"omit", signal:controller.signal});
+      if (!response.ok) throw new Error("unavailable");
+      const next = await response.json();
+      if (!Array.isArray(next.applications) || !next.stats || !["ok", "uninitialized", "error"].includes(next.state)) throw new Error("invalid response");
+      const changed = JSON.stringify(data) !== JSON.stringify(next) || networkError;
+      data = next;
+      networkError = "";
+      if (changed) render();
+    } catch (_) {
+      networkError = "本机服务暂时不可用，请检查运行网页的终端。";
+      render();
+    } finally {
+      clearTimeout(timeout);
+      refreshing = false;
+      $("refresh").disabled = false;
+    }
+  }
+  $("search").addEventListener("input", render);
+  for (const button of document.querySelectorAll(".filter")) button.addEventListener("click", () => {
+    activeFilter = button.dataset.filter;
+    for (const item of document.querySelectorAll(".filter")) item.setAttribute("aria-pressed", String(item === button));
+    render();
+  });
+  if (live) {
+    $("mode").textContent = "本机同步 · 每 15 秒更新";
+    $("footer-mode").textContent = "仅通过 127.0.0.1 提供此网页";
+    $("refresh").hidden = false;
+    $("refresh").addEventListener("click", refresh);
+    setInterval(() => { if (!document.hidden) refresh(); }, 15000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  }
+  render();
+</script>
+</body>
+</html>

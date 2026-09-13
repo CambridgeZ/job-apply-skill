@@ -1,4 +1,4 @@
 interface:
   display_name: "简历网申助手"
-  short_description: "用简历填写指定公司的网申，协助手机验证码登录并复用已确认资料"
-  default_prompt: "使用 $job-apply，读取我附上的简历，投递我指定的岗位；缺失信息先问我并保存，后续在适用范围内直接复用。"
+  short_description: "按公司题目改写网申，展示填写内容等你确认，并用网页记录投递进展"
+  default_prompt: "使用 $job-apply，根据附件简历和目标公司改写并填写网申，展示实际内容等我确认后再提交，保存补充答案并更新投递记录网页。"

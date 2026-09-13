@@ -36,6 +36,16 @@ class ProfileStoreTests(unittest.TestCase):
                 "status": status, "url": "https://example.com/jobs/example-job",
                 "resume_ref": "fixture-resume.pdf", **extra}
 
+    def review(self, value="Sample final answer"):
+        return {"fields": [{"label": "Availability", "value": value,
+                            "source": "User answer in fixture", "adaptation": "Matched the form date format"}],
+                "notes": "Actual final form contents in a fixture"}
+
+    def confirm(self, review_hash, **extra):
+        identity = {k: self.app()[k] for k in ("company", "job_id", "account")}
+        return self.cli("confirm-application", value={**identity, "review_hash": review_hash,
+                        "reference": "Explicit user confirmation in fixture conversation", **extra})
+
     def stored(self):
         return json.loads(self.file.read_text())
 
@@ -145,12 +155,137 @@ class ProfileStoreTests(unittest.TestCase):
         result = self.cli("record-application", value=self.app())
         self.assertEqual(set(result), {"status", "application_status"})
         created = self.stored()["applications"][0]["created_at"]
+        review_hash = self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review()))["review_hash"]
+        self.confirm(review_hash)
+        self.cli("record-application", value=self.app("submitted"), code=2)
         self.cli("record-application", value=self.app("submitted", evidence="Fixture confirmation reference"))
         apps = self.cli("list-applications", "--company", "Example Company", "--job-id", "example-job")["applications"]
         self.assertEqual(len(apps), 1)
         self.assertEqual(apps[0]["created_at"], created)
         self.assertEqual(apps[0]["status"], "submitted")
         self.assertEqual(self.cli("list-applications", "--company", "Unrelated")["applications"], [])
+
+    def test_submission_requires_confirmation_even_when_status_is_ready(self):
+        self.cli("record-application", value=self.app("ready"))
+        for status in ("submitting", "submitted"):
+            self.cli("record-application", value=self.app(status, evidence="Fixture evidence"), code=2)
+        result = self.cli("record-application", value=self.app("ready", review=self.review()))
+        self.assertEqual(result["application_status"], "awaiting_confirmation")
+        before = self.file.read_bytes()
+        for status in ("submitting", "submitted"):
+            self.cli("record-application", value=self.app(status, evidence="Fixture evidence"), code=2)
+            self.assertEqual(self.file.read_bytes(), before)
+        self.confirm(result["review_hash"])
+        self.assertEqual(self.cli("record-application", value=self.app("submitting"))["application_status"], "submitting")
+
+    def test_awaiting_confirmation_requires_actual_review_fields(self):
+        for extra in ({}, {"review": {"fields": []}}, {"review": {"fields": [{"label": "Name"}]}},
+                      {"review": {"fields": [{"label": "", "value": "Example"}]}}):
+            self.cli("record-application", value=self.app("awaiting_confirmation", **extra), code=2)
+        result = self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review()))
+        self.assertEqual(len(result["review_hash"]), 64)
+        self.assertNotIn("Sample final answer", json.dumps(result))
+        self.assertEqual(self.stored()["applications"][0]["review"], self.review())
+
+    def test_record_rejects_forged_confirmation_and_input_hash(self):
+        result = self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review()))
+        before = self.file.read_bytes()
+        forged = {"review_hash": result["review_hash"], "reference": "Not from confirm command",
+                  "confirmed_at": "2030-01-01T00:00:00Z"}
+        for extra in ({"confirmation": forged}, {"review_hash": result["review_hash"]}):
+            self.cli("record-application", value=self.app("ready", **extra), code=2)
+            self.assertEqual(self.file.read_bytes(), before)
+
+    def test_stale_confirmation_hash_does_not_mutate_data(self):
+        old_hash = self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review()))["review_hash"]
+        new_hash = self.cli("record-application", value=self.app("draft", review=self.review("Changed final answer")))["review_hash"]
+        self.assertNotEqual(new_hash, old_hash)
+        before = self.file.read_bytes()
+        identity = {k: self.app()[k] for k in ("company", "job_id", "account")}
+        result = self.cli("confirm-application", value={**identity, "review_hash": old_hash,
+                          "reference": "Confirmation of the earlier version"}, code=3)
+        self.assertEqual(result["status"], "stale_review")
+        self.assertEqual(self.file.read_bytes(), before)
+        self.confirm(new_hash)
+        confirmation = self.stored()["applications"][0]["confirmation"]
+        self.assertEqual(confirmation["review_hash"], new_hash)
+        self.assertTrue(confirmation["confirmed_at"].endswith("Z"))
+
+    def test_changed_review_clears_confirmation_and_requires_another_confirmation(self):
+        old_hash = self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review()))["review_hash"]
+        self.confirm(old_hash)
+        before = self.file.read_bytes()
+        self.cli("record-application", value=self.app("submitting", review=self.review("Changed final answer")), code=2)
+        self.assertEqual(self.file.read_bytes(), before)
+        result = self.cli("record-application", value=self.app("ready", review=self.review("Changed final answer")))
+        self.assertEqual(result["application_status"], "awaiting_confirmation")
+        self.assertNotIn("confirmation", self.stored()["applications"][0])
+        self.cli("record-application", value=self.app("submitting"), code=2)
+        self.confirm(result["review_hash"])
+        self.cli("record-application", value=self.app("submitting"))
+
+    def test_partial_application_updates_preserve_review_confirmation_and_metadata(self):
+        result = self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review(),
+                          recruiting_url="https://example.com/careers", context_note="Preserve this fixture metadata"))
+        self.confirm(result["review_hash"])
+        original = self.stored()["applications"][0]
+        identity = {k: self.app()[k] for k in ("company", "job_id", "account")}
+        self.cli("record-application", value={**identity, "status": "blocked"})
+        updated = self.stored()["applications"][0]
+        for key in ("review", "review_hash", "confirmation", "recruiting_url", "context_note", "created_at", "resume_ref", "url"):
+            self.assertEqual(updated[key], original[key])
+        self.cli("record-application", value={**identity, "review": self.review(), "status": "ready"})
+        self.assertEqual(self.stored()["applications"][0]["confirmation"], original["confirmation"])
+
+    def test_changing_attachment_or_job_url_requires_a_different_review(self):
+        result = self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review()))
+        self.confirm(result["review_hash"])
+        identity = {k: self.app()[k] for k in ("company", "job_id", "account")}
+        before = self.file.read_bytes()
+        for change in ({"resume_ref": "revised-fixture-resume.pdf"}, {"url": "https://example.com/jobs/revised-target"}):
+            for extra in ({}, {"review": self.review()}):
+                self.cli("record-application", value={**identity, **change, **extra}, code=2)
+                self.assertEqual(self.file.read_bytes(), before)
+
+    def test_changing_attachment_with_new_review_invalidates_prior_confirmation(self):
+        result = self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review()))
+        self.confirm(result["review_hash"])
+        new_review = self.review()
+        new_review["fields"].append({"label": "Uploaded resume version", "value": "revised-fixture-resume.pdf"})
+        updated = self.cli("record-application", value=self.app("ready", resume_ref="revised-fixture-resume.pdf", review=new_review))
+        self.assertNotEqual(updated["review_hash"], result["review_hash"])
+        self.assertEqual(updated["application_status"], "awaiting_confirmation")
+        self.assertNotIn("confirmation", self.stored()["applications"][0])
+        identity = {k: self.app()[k] for k in ("company", "job_id", "account")}
+        stale = self.cli("confirm-application", value={**identity, "review_hash": result["review_hash"],
+                         "reference": "Prior attachment confirmation"}, code=3)
+        self.assertEqual(stale["status"], "stale_review")
+
+    def test_legacy_submitted_records_remain_readable_and_preserved(self):
+        self.cli("init")
+        document = self.stored()
+        legacy = self.app("submitted", evidence="Legacy fixture evidence", created_at="2020-01-01T00:00:00Z",
+                          updated_at="2020-01-01T00:00:00Z")
+        document["applications"].append(legacy)
+        self.file.write_text(json.dumps(document))
+        result = self.cli("list-applications")
+        self.assertEqual(result["applications"], [legacy])
+        self.assertEqual(result["warnings"][0]["code"], "legacy_submitted_without_review")
+        self.cli("put-fact", value=self.fact())
+        self.assertEqual(self.stored()["applications"], [legacy])
+        before = self.file.read_bytes()
+        self.cli("record-application", value=self.app("submitted", evidence="New evidence cannot bypass confirmation"), code=2)
+        self.assertEqual(self.file.read_bytes(), before)
+
+    def test_tampered_saved_review_hash_is_rejected_without_overwriting(self):
+        self.cli("record-application", value=self.app("awaiting_confirmation", review=self.review()))
+        document = self.stored()
+        document["applications"][0]["review"]["fields"][0]["value"] = "Tampered answer"
+        self.file.write_text(json.dumps(document))
+        before = self.file.read_bytes()
+        self.cli("list-applications", code=2)
+        self.cli("put-fact", value=self.fact(), code=2)
+        self.assertEqual(self.file.read_bytes(), before)
 
     def test_forget_exact_scope(self):
         self.cli("put-fact", value=self.fact("general"))
@@ -176,6 +311,7 @@ class ProfileStoreTests(unittest.TestCase):
         for fact in invalid_facts:
             self.cli("put-fact", value=fact, code=2)
         self.cli("record-application", value=self.app(status=[]), code=2)
+        self.cli("record-application", value=self.app(status=[], review=self.review()), code=2)
 
     def test_concurrent_writers_keep_every_record(self):
         def write(index):
