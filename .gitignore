@@ -1,0 +1,25 @@
+# Personal application data belongs outside this repository.
+profile.json
+profile.json.*
+applications.json
+applications.jsonl
+application-data/
+private/
+data/
+resumes/
+attachments/
+screenshots/
+*.pdf
+*.docx
+*.doc
+*.lock
+.env
+.env.*
+*.pem
+*.key
+*.log
+*.tmp
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
