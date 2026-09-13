@@ -80,7 +80,7 @@ class FollowupStoreTests(unittest.TestCase):
         self.call("resolve", seconds=179, payload={"question_id": "fixture-question", "source": "codex", "reference": "fixture-turn-id"})
         self.assertEqual(self.call("due", seconds=180)["questions"], [])
         self.assertEqual(self.call("claim", seconds=180, question_id="fixture-question", code=3)["status"], "not_claimable")
-        self.ask(question_id="cancelled-question")
+        self.ask(question_id="cancelled-question", job_id="different-job")
         self.call("cancel", question_id="cancelled-question")
         self.assertEqual(self.call("due", seconds=300)["questions"], [])
         self.assertEqual(self.call("get", question_id="cancelled-question")["question"]["state"], "cancelled")
@@ -186,7 +186,178 @@ class FollowupStoreTests(unittest.TestCase):
         self.assertEqual(result["question_id"], "fixture-question")
         self.assertEqual(self.path.read_bytes(), before)
         self.call("resolve", payload={"question_id": "fixture-question", "source": "codex", "reference": "fixture-turn"})
-        self.ask(question_id="new-task-question", thread_id="new-task")
+        self.call("ask", payload=self.question(question_id="new-task-question", thread_id="new-task"), code=3)
+
+    def test_check_without_store_is_read_only_and_does_not_start_timer(self):
+        payload = self.question()
+        del payload["question_id"]
+        for command in ("check", "preflight"):
+            result = self.call(command, seconds=500, payload=payload)
+            self.assertTrue(result["can_ask"])
+            self.assertEqual(result["question_ids"], [])
+            self.assertEqual(result["asked_fields"], [])
+            self.assertEqual(result["new_fields"], ["start_date", "location"])
+            self.assertNotIn("asked_at", result)
+            self.assertNotIn("deadline", result)
+            self.assertFalse(self.path.parent.exists())
+        recorded = self.call("ask", seconds=501, payload=payload)
+        self.assertEqual(followups.timestamp(recorded["asked_at"]), BASE + dt.timedelta(seconds=501))
+        self.assertEqual(set(recorded), {"question_id", "asked_at", "deadline", "state", "notification"})
+
+    def test_check_existing_store_preserves_content_permissions_and_mtime(self):
+        self.ask()
+        self.path.chmod(0o640)
+        original_bytes = self.path.read_bytes()
+        original_stat = self.path.stat()
+        original_files = set(self.path.parent.iterdir())
+        with mock.patch.object(followups, "locked", side_effect=AssertionError("Read-only check must not lock")):
+            result = self.call("check", payload=self.question(question_id="different-id"), code=3)
+        self.assertFalse(result["can_ask"])
+        self.assertEqual(self.path.read_bytes(), original_bytes)
+        self.assertEqual(self.path.stat().st_mtime_ns, original_stat.st_mtime_ns)
+        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o640)
+        self.assertEqual(set(self.path.parent.iterdir()), original_files)
+
+    def test_information_subset_stays_asked_after_close_and_across_tasks(self):
+        for state in ("pending", "answered", "cancelled"):
+            with self.subTest(state=state):
+                self.path = Path(self.temp.name) / state / "followups.json"
+                self.ask()
+                if state == "answered":
+                    self.call("resolve", payload={"question_id": "fixture-question", "source": "codex",
+                                                  "reference": "fixture-answer-turn"})
+                elif state == "cancelled":
+                    self.call("cancel", question_id="fixture-question")
+                before = self.path.read_bytes()
+                subset = self.question(question_id="new-batch-id", thread_id="another-task", fields=[
+                    {"key": "location", "label": "工作地点", "prompt": "请补充工作地点"}])
+                checked = self.call("check", seconds=1000, payload=subset, code=3)
+                self.assertFalse(checked["can_ask"])
+                self.assertEqual(checked["question_ids"], ["fixture-question"])
+                self.assertEqual(checked["asked_fields"], ["location"])
+                self.assertEqual(checked["new_fields"], [])
+                self.assertEqual(self.call("ask", seconds=1001, payload=subset, code=3), checked)
+                self.assertEqual(self.path.read_bytes(), before)
+
+    def test_mixed_existing_and_new_fields_block_entire_batch_without_saving_new_fields(self):
+        self.ask()
+        before = self.path.read_bytes()
+        mixed = self.question(question_id="mixed-batch", thread_id="new-task", fields=[
+            {"key": "salary", "label": "薪资", "prompt": "薪资格式"},
+            {"key": "location", "label": "地点", "prompt": "与此前不同的题干"}])
+        checked = self.call("check", payload=mixed, code=3)
+        self.assertEqual(checked["asked_fields"], ["location"])
+        self.assertEqual(checked["new_fields"], ["salary"])
+        self.assertEqual(self.call("ask", payload=mixed, code=3), checked)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertNotIn("salary", self.path.read_text())
+
+    def test_check_reports_all_original_question_ids_and_all_overlapping_fields(self):
+        start_date, location = self.question()["fields"]
+        self.ask(fields=[start_date])
+        self.ask(question_id="location-question", fields=[location])
+        proposed = self.question(question_id="merged-question", fields=[location, start_date,
+            {"key": "salary", "label": "Salary", "prompt": "Salary format"}])
+        checked = self.call("check", payload=proposed, code=3)
+        self.assertEqual(checked["question_ids"], ["fixture-question", "location-question"])
+        self.assertEqual(checked["asked_fields"], ["location", "start_date"])
+        self.assertEqual(checked["new_fields"], ["salary"])
+
+    def test_stable_keys_match_rewording_case_whitespace_and_fullwidth_characters(self):
+        self.ask()
+        proposed = self.question(question_id="normalized-key", fields=[
+            {"key": " ＬＯＣＡＴＩＯＮ ", "label": "Rephrased", "prompt": "Rephrased prompt"}])
+        checked = self.call("check", payload=proposed, code=3)
+        self.assertEqual(checked["asked_fields"], [" ＬＯＣＡＴＩＯＮ "])
+        self.assertEqual(checked["new_fields"], [])
+        with self.assertRaises(followups.StoreError):
+            self.call("check", payload=self.question(fields=[
+                {"key": "location", "label": "One", "prompt": "One"},
+                {"key": " LOCATION ", "label": "Two", "prompt": "Two"}]))
+
+    def test_new_fields_or_different_company_job_and_kind_are_not_permanently_blocked(self):
+        self.ask()
+        possibilities = [
+            self.question(question_id="new-field", fields=[{"key": "salary", "label": "Salary", "prompt": "Salary format"}]),
+            self.question(question_id="new-company", company="Other Company"),
+            self.question(question_id="new-job", job_id="other-job"),
+            self.question(question_id="verification-question", kind="verification"),
+            self.question(question_id="review-question", kind="review"),
+        ]
+        for payload in possibilities:
+            with self.subTest(question_id=payload["question_id"]):
+                self.assertTrue(self.call("check", payload=payload)["can_ask"])
+                self.call("ask", payload=payload)
+
+    def test_review_and_verification_keep_existing_closed_unsent_lifecycle(self):
+        for kind in ("review", "verification"):
+            with self.subTest(kind=kind):
+                self.path = Path(self.temp.name) / kind / "followups.json"
+                self.ask(kind=kind)
+                proposed = self.question(question_id="next-cycle", kind=kind)
+                self.call("check", payload=proposed, code=3)
+                self.call("resolve", payload={"question_id": "fixture-question", "source": "codex",
+                                              "reference": "original-cycle-completed"})
+                self.assertTrue(self.call("check", payload=proposed)["can_ask"])
+                self.call("ask", payload=proposed)
+
+    def test_check_does_not_weaken_notified_review_and_verification_protection(self):
+        for kind in ("review", "verification"):
+            for notification in ("sending", "sent", "uncertain"):
+                with self.subTest(kind=kind, notification=notification):
+                    self.path = Path(self.temp.name) / (kind + notification) / "followups.json"
+                    self.ask(kind=kind)
+                    self.call("claim", seconds=180, question_id="fixture-question")
+                    if notification == "sent":
+                        self.call("mark-sent", seconds=181, payload=self.receipt())
+                    elif notification == "uncertain":
+                        self.call("mark-uncertain", seconds=181, question_id="fixture-question")
+                    self.call("cancel", seconds=182, question_id="fixture-question")
+                    before = self.path.read_bytes()
+                    proposed = self.question(question_id="new-cycle-id", kind=kind)
+                    self.call("check", payload=proposed, code=3)
+                    self.call("ask", payload=proposed, code=3)
+                    self.assertEqual(self.path.read_bytes(), before)
+
+    def test_changed_review_field_version_uses_existing_versioned_batch_lifecycle(self):
+        old_version = [{"key": "review." + "a" * 64, "label": "Review", "prompt": "Inspect current review"}]
+        new_version = [{"key": "review." + "b" * 64, "label": "Review", "prompt": "Inspect changed review"}]
+        self.ask(kind="review", fields=old_version)
+        self.call("claim", seconds=180, question_id="fixture-question")
+        self.call("mark-sent", seconds=181, payload=self.receipt())
+        self.call("resolve", seconds=182, payload={"question_id": "fixture-question", "source": "codex",
+                                                  "reference": "explicit-confirmation-original-version"})
+        proposed = self.question(question_id="new-version", kind="review", fields=new_version)
+        self.assertTrue(self.call("check", payload=proposed)["can_ask"])
+        self.call("ask", payload=proposed)
+
+    def test_cli_check_and_preflight_are_read_only_and_report_prior_fields(self):
+        command = [sys.executable, "-B", str(SCRIPTS / "followup_store.py"), "--file", str(self.path)]
+        payload = self.question(question_id="proposed-question")
+        first = subprocess.run(command + ["check"], input=json.dumps(payload), text=True, capture_output=True)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(json.loads(first.stdout)["can_ask"])
+        self.assertFalse(self.path.parent.exists())
+        self.ask()
+        before = self.path.read_bytes()
+        second = subprocess.run(command + ["preflight"], input=json.dumps(payload), text=True, capture_output=True)
+        self.assertEqual(second.returncode, 3, second.stderr)
+        self.assertFalse(json.loads(second.stdout)["can_ask"])
+        self.assertEqual(json.loads(second.stdout)["question_id"], "fixture-question")
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_parallel_overlapping_asks_record_one_batch_under_the_existing_lock(self):
+        def record(index):
+            payload = self.question(question_id="parallel-" + str(index), thread_id="task-" + str(index), fields=[
+                {"key": "location", "label": "Location", "prompt": "Location format"},
+                {"key": "new-" + str(index), "label": "Extra field", "prompt": "Extra field format"}])
+            return followups.execute(self.path, "ask", payload=payload)
+        with mock.patch.object(followups, "utc_now", return_value=BASE):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                outcomes = list(executor.map(record, range(20)))
+        self.assertEqual(sum(code == 0 for _, code in outcomes), 1)
+        self.assertTrue(all(code in (0, 3) for _, code in outcomes))
+        self.assertEqual(len(self.stored()["questions"]), 1)
 
     def test_cancel_after_notification_cannot_reset_reminder_by_reasking(self):
         self.ask()

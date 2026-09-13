@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Private pending-question metadata; no timers, messaging, or answer storage.
 
-Call ask only after showing the question. Its fixed 180-second delay uses the
-real clock, never caller-supplied time. Call resolve only after the entire batch
+Call check with the proposed question metadata before showing a question. It is
+read-only; previously asked information fields block the whole proposed batch,
+including across tasks and closed records. Reuse stable field keys for synonymous
+questions. A check does not reserve a question; ask checks again under its lock.
+Call ask only after showing an allowed question. Its fixed 180-second delay uses
+the real clock, never caller-supplied time. Call resolve only after the entire batch
 has been answered; partial replies leave it pending. Resolving a reminder is not
 permission to fill fields, confirm a review, or submit an application.
 Verification prompts are replaced with a neutral description. Other prompts and
@@ -18,6 +22,7 @@ import re
 import stat
 import sys
 import tempfile
+import unicodedata
 import uuid
 
 from profile_store import StoreError, locked, nonempty, parse_json, require, timestamp
@@ -50,6 +55,11 @@ def keys_only(value, allowed):
 def valid_id(value):
     require(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value) is not None,
             "Question ID must be a short opaque identifier.")
+
+
+def field_key(value):
+    # Semantic aliases must use one stable key; do not guess equivalence from prose.
+    return unicodedata.normalize("NFKC", value).strip().casefold()
 
 
 def ask_valid(value):
@@ -114,14 +124,15 @@ def validate(data):
             require("cancelled_at" in question, "Cancelled question requires a timestamp.")
 
 
-def read_store(path):
+def read_store(path, harden_permissions=True):
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except FileNotFoundError:
         return {"schema_version": 1, "questions": []}
     with os.fdopen(fd, "r", encoding="utf-8") as stream:
         require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), "Follow-up path must be a regular file.")
-        os.fchmod(stream.fileno(), 0o600)
+        if harden_permissions:
+            os.fchmod(stream.fileno(), 0o600)
         data = parse_json(stream.read())
     validate(data)
     return data
@@ -152,20 +163,54 @@ def is_due(question, current):
     return question["state"] == "pending" and question["notification"] == "unsent" and timestamp(question["deadline"]) <= current
 
 
+def check_question(data, question):
+    """Return matching IDs and requested keys, never old prompts or answers."""
+    requested = {field_key(field["key"]): field["key"] for field in question["fields"]}
+    require(len(requested) == len(question["fields"]), "Each requested field key must be unique after normalization.")
+    already_asked = set()
+    matches = []
+    reason = None
+
+    def signature(item):
+        return (item["company"], item["job_id"], item.get("thread_id"), item["kind"],
+                tuple(sorted(field_key(field["key"]) for field in item["fields"])))
+
+    for existing in data["questions"]:
+        same_id = existing["question_id"] == question.get("question_id")
+        overlap = set(requested) & {field_key(field["key"]) for field in existing["fields"]}
+        same_information_scope = (question["kind"] == existing["kind"] == "information"
+                                  and question["company"] == existing["company"]
+                                  and question["job_id"] == existing["job_id"])
+        previous_information = same_information_scope and bool(overlap)
+        protected_batch = (question["kind"] != "information" and signature(existing) == signature(question)
+                           and (existing["state"] == "pending"
+                                or existing["notification"] in ("sending", "sent", "uncertain")))
+        if previous_information or protected_batch or same_id:
+            matches.append(existing["question_id"])
+            if previous_information or protected_batch:
+                already_asked.update(overlap)
+            reason = reason or ("already_asked_fields" if previous_information
+                                else "protected_batch" if protected_batch else "question_id_conflict")
+    result = {"status": "conflict" if matches else "ready", "can_ask": not matches,
+              "question_ids": matches,
+              "asked_fields": [original for key, original in requested.items() if key in already_asked],
+              "new_fields": [original for key, original in requested.items() if key not in already_asked]}
+    if matches:
+        result.update(question_id=matches[0], reason=reason)
+    return result
+
+
 def run(data, command, current, payload=None, question_id=None, company=None, job_id=None, thread_id=None, state=None):
-    if command == "ask":
+    if command in ("check", "preflight", "ask"):
         ask_valid(payload)
         question = dict(payload)
-        question.setdefault("question_id", "q-" + uuid.uuid4().hex[:10])
+        if command == "ask":
+            question.setdefault("question_id", "q-" + uuid.uuid4().hex[:10])
         if question["kind"] == "verification":
             question["fields"] = VERIFICATION_FIELDS
-        def signature(item):
-            return (item["company"], item["job_id"], item.get("thread_id"), item["kind"],
-                    tuple(sorted(field["key"] for field in item["fields"])))
-        for existing in data["questions"]:
-            if existing["question_id"] == question["question_id"] or (signature(existing) == signature(question)
-                    and (existing["state"] == "pending" or existing["notification"] in ("sending", "sent", "uncertain"))):
-                return {"status": "conflict", "question_id": existing["question_id"]}, 3, False
+        checked = check_question(data, question)
+        if not checked["can_ask"] or command != "ask":
+            return checked, 0 if checked["can_ask"] else 3, False
         question.update(asked_at=iso(current), deadline=iso(current + dt.timedelta(seconds=DELAY_SECONDS)),
                         state="pending", notification="unsent")
         data["questions"].append(question)
@@ -218,6 +263,12 @@ def run(data, command, current, payload=None, question_id=None, company=None, jo
 
 def execute(path, command, **kwargs):
     path = Path(path).expanduser().absolute()
+    if command in ("check", "preflight"):
+        # Writers replace the data file atomically, so a read gets one complete
+        # version. Do not create a parent/lock or chmod data for an advisory check.
+        data = read_store(path, harden_permissions=False)
+        result, code, _ = run(data, command, utc_now(), **kwargs)
+        return result, code
     with locked(path):
         data = read_store(path)
         result, code, changed = run(data, command, utc_now(), **kwargs)
@@ -230,7 +281,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", default=DEFAULT_FILE, help="Dedicated private storage path, separate from profile.json")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("ask", "resolve", "mark-sent"):
+    for name in ("check", "preflight", "ask", "resolve", "mark-sent"):
         commands.add_parser(name, help="Read a JSON object from stdin")
     for name in ("get", "claim", "mark-uncertain", "cancel"):
         commands.add_parser(name).add_argument("question_id")
@@ -242,7 +293,7 @@ def main():
     args = vars(parser.parse_args())
     path, command = args.pop("file"), args.pop("command")
     try:
-        if command in ("ask", "resolve", "mark-sent"):
+        if command in ("check", "preflight", "ask", "resolve", "mark-sent"):
             args["payload"] = parse_json(sys.stdin.read())
         result, code = execute(path, command, **args)
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
