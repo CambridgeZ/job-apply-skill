@@ -1,6 +1,13 @@
 # Personal application data belongs outside this repository.
 profile.json
 profile.json.*
+followups.json
+followups.json.*
+notifications.json
+notifications.json.*
+im-reply-cursors.json
+im-reply-cursors.json.*
+*-route.json
 applications.json
 applications.jsonl
 application-data/
